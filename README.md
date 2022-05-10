@@ -13,6 +13,9 @@ compiler: g++
 libraries: -lxyzsphinxbase, -lxyzsphinxad, -lxyzpocketsphinx (These libraries will be available after installing articulate-pocketsphinx in the system)    
 
 ## Versions  
+### v1.1.1  
+Solved possible race conditions. No race conditions detected by valgrind.  
+
 ### v1.1.0  
 Batch call is optimised by not loading dictionaries. This results on a ~10-fold speedup for each call.  
   
