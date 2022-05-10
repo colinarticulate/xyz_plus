@@ -1,8 +1,9 @@
 #include <stdexcept>
 #include <limits>
 #include <iostream>
-//#include <chrono>
+#include <chrono>
 #include <math.h> 
+#include <memory>
 /* SphinxBase headers. */
 //#include <xyzsphinxbase/pio.h>
 // #include <xyzsphinxbase/err.h>
@@ -11,12 +12,16 @@
 #include <xyzsphinxbase/byteorder.h>
 
 /* SphinxBase headers. */
+#include <xyzsphinxbase/ckd_alloc.h>
 #include <xyzsphinxbase/err.h>
 #include <xyzsphinxbase/strfuncs.h>
 #include <xyzsphinxbase/filename.h>
 #include <xyzsphinxbase/pio.h>
 #include <xyzsphinxbase/jsgf.h>
 #include <xyzsphinxbase/hash_table.h>
+#include <xyzsphinxbase/fe.h>
+
+
 
 /* Local headers. */
 #include "cmdln_macro.h"
@@ -31,6 +36,39 @@
 #include "ngram_search_fwdflat.h"
 #include "allphone_search.h"
 #include "state_align_search.h"
+
+//Re-doing API:
+#include "_genrand.h"
+#include "_fe_warp.h"
+
+/*Denting API*/
+//ps:
+#include "ms_mgau.h"
+#include "ptm_mgau.h"
+#include "s2_semi_mgau.h"
+//sb:
+#include "fe_internal.h"
+#include "fe_warp.h"
+#include "fe_warp_inverse_linear.h"
+#include "fe_warp_affine.h"
+#include "fe_warp_piecewise_linear.h"
+#include "fe_noise.h"
+#include "fe_prespch_buf.h"
+#include "fe_type.h"
+
+
+//from fe_sigproc.c
+/* Use extra precision for cosines, Hamming window, pre-emphasis
+ * coefficient, twiddle factors. */
+#ifdef FIXED_POINT
+#define FLOAT2COS(x) FLOAT2FIX_ANY(x,30)
+#define COSMUL(x,y) FIXMUL_ANY(x,y,30)
+#else
+#define FLOAT2COS(x) (x)
+#define COSMUL(x,y) ((x)*(y))
+#endif
+
+
 
 #define MAX_INT32		((int32) 0x7fffffff)
 #define MAX_N_FRAMES MAX_INT32
@@ -52,14 +90,25 @@
 #define feat_window_size(f) ((f)->window_size)
 #define cep_dump_dbg(fcb,mfc,nfr,text)
 
+// typedef arg_s arg_t;
+// /**
+//  * @struct arg_t
+//  * Argument definition structure.
+//  */
+// typedef struct arg_s {
+// 	char const *name;   /**< Name of the command line switch */
+// 	int type;           /**< Type of the argument in question */
+// 	char const *deflt;  /**< Default value (as a character string), or NULL if none */
+// 	char const *doc;    /**< Documentation/description string */
+// } arg_t;
 
-static const arg_t _ps_args_def[] = {
+static const arg_t _ps_args_def[114] = { //In C++11, in-class member initializers are allowed, but basically act the same as initializing in a member initialization list. Therefore, the size of the array must be explicitly stated.
     POCKETSPHINX_OPTIONS,
     CMDLN_EMPTY_OPTION
 };
 
 /* Feature and front-end parameters that may be in feat.params */
-static const arg_t _feat_defn[] = {
+static const arg_t _feat_defn[40] = { //In C++11, in-class member initializers are allowed, but basically act the same as initializing in a member initialization list. Therefore, the size of the array must be explicitly stated.
     waveform_to_cepstral_command_line_macro(),
     cepstral_to_feature_command_line_macro(),
     CMDLN_EMPTY_OPTION
@@ -214,16 +263,15 @@ static const arg_t batch_args_def[] = {
     CMDLN_EMPTY_OPTION
 };
 
-int
-_fe_process_frames(fe_t *fe,
-                const int16 **inout_spch,
-                size_t *inout_nsamps,
-                mfcc_t **buf_cep,
-                int32 *inout_nframes,
-                int32 *out_frameidx)
-{
-    return fe_process_frames_ext(fe, inout_spch, inout_nsamps, buf_cep, inout_nframes, NULL, NULL, out_frameidx);
-}
+
+
+/* Period parameters */
+#define N 624
+#define M 397
+#define MATRIX_A 0x9908b0dfUL   /* constant vector a */
+#define UPPER_MASK 0x80000000UL /* most significant w-r bits */
+#define LOWER_MASK 0x7fffffffUL /* least significant r bits */
+
 
 
 class XYZ_Batch {
@@ -236,6 +284,9 @@ class XYZ_Batch {
         size_t _audio_buffer_size; 
         int _argc; 
         char **_argv;
+
+        XYZ_SB_Genrand _genrand;
+        XYZ_SB_FE_Warp _fe_warp;
      
     public:
         char _result[512];
@@ -266,6 +317,10 @@ class XYZ_Batch {
             _cmean_t0 = (float*)malloc(sizeof(float)*13);
             _cmean_t1 = (float*)malloc(sizeof(float)*13);
             _cmean_tn = (float*)malloc(sizeof(float)*13);
+
+            
+
+
 
         }
 
@@ -500,7 +555,7 @@ class XYZ_Batch {
                     size_t nread;
 
                     nread = fread(data, sizeof(*data), sizeof(data)/sizeof(*data), rawfh);
-                    ps_process_raw(_ps, data, nread, FALSE, FALSE);
+                    _ps_process_raw(_ps, data, nread, FALSE, FALSE);
                     total += nread;
                 }
                 
@@ -582,7 +637,7 @@ class XYZ_Batch {
                 /* Write them in two (or more) parts if there is wraparound. */
                 while (inptr + ncep > acmod->n_mfc_alloc) {
                     int32 ncep1 = acmod->n_mfc_alloc - inptr;
-                    if (fe_process_frames(acmod->fe, inout_raw, inout_n_samps,
+                    if (_fe_process_frames(acmod->fe, inout_raw, inout_n_samps,
                                         acmod->mfc_buf + inptr, &ncep1, &out_frameidx) < 0)
                         return -1;
                 
@@ -618,7 +673,7 @@ class XYZ_Batch {
                 }
 
                 assert(inptr + ncep <= acmod->n_mfc_alloc);        
-                if (fe_process_frames(acmod->fe, inout_raw, inout_n_samps,
+                if (_fe_process_frames(acmod->fe, inout_raw, inout_n_samps,
                                     acmod->mfc_buf + inptr, &ncep, &out_frameidx) < 0)
                     return -1;
 
@@ -681,8 +736,8 @@ class XYZ_Batch {
             return ncep;
         }
 
-        static int
-        //int
+        //static int
+        int
         _acmod_process_full_raw(acmod_t *acmod,
                             const int16 **inout_raw,
                             size_t *inout_n_samps)
@@ -698,7 +753,7 @@ class XYZ_Batch {
             if (acmod->rawfh)
                 fwrite(*inout_raw, sizeof(int16), *inout_n_samps, acmod->rawfh);
             /* Resize mfc_buf to fit. */
-            if (fe_process_frames(acmod->fe, NULL, inout_n_samps, NULL, &nfr, NULL) < 0)
+            if (_fe_process_frames(acmod->fe, NULL, inout_n_samps, NULL, &nfr, NULL) < 0)
                 return -1;
             if (acmod->n_mfc_alloc < nfr + 1) {
                 ckd_free_2d(acmod->mfc_buf);
@@ -711,9 +766,9 @@ class XYZ_Batch {
             acmod->n_mfc_frame = 0;
             acmod->mfc_outidx = 0;
             fe_start_utt(acmod->fe);
-            if (fe_process_frames(acmod->fe, inout_raw, inout_n_samps, acmod->mfc_buf, &nfr, NULL) < 0) //<<--- This calculates mfcc's
+            if (_fe_process_frames(acmod->fe, inout_raw, inout_n_samps, acmod->mfc_buf, &nfr, NULL) < 0) //<<--- This calculates mfcc's
                 return -1;
-            fe_end_utt(acmod->fe, acmod->mfc_buf[nfr], &ntail); //<<--- Recalculates mfcc for the last frame
+            _fe_end_utt(acmod->fe, acmod->mfc_buf[nfr], &ntail); //<<--- Recalculates mfcc for the last frame
             nfr += ntail;
 
             cepptr = acmod->mfc_buf;
@@ -1061,48 +1116,7 @@ class XYZ_Batch {
             // }
         }
 
-        // void *
-        // ___ckd_calloc_2d__(size_t d1, size_t d2, size_t elemsize)
-        // {
-        //     char **ref, *mem;
-        //     size_t i, offset;
-
-        //     mem =
-        //         (char *) ___ckd_calloc__(d1 * d2, elemsize);
-        //     ref =
-        //         (char **) __ckd_malloc__(d1 * sizeof(void *), "calloc_2d",
-        //                                 0);
-
-        //     for (i = 0, offset = 0; i < d1; i++, offset += d2 * elemsize)
-        //         ref[i] = mem + offset;
-
-        //     return ref;
-        // }
-
-        // void *
-        // ___ckd_calloc__(size_t n_elem, size_t elem_size)
-        // {
-        //     void *mem;
-
-        // #if defined(__ADSPBLACKFIN__) && !defined(__linux__)
-        //     if ((mem = heap_calloc(heap_lookup(1),n_elem, elem_size)) == NULL)
-        //         if ((mem = heap_calloc(heap_lookup(0),n_elem, elem_size)) == NULL)
-        //         {
-        //             ckd_fail("calloc(%d,%d) failed from %s(%d), free space: %d\n", n_elem,
-        //                 elem_size, caller_file, caller_line,space_unused());
-        //         }
-        // #else
-        //     if ((mem = calloc(n_elem, elem_size)) == NULL) {
-        //         // ckd_fail("calloc(%d,%d) failed from %s(%d)\n", n_elem,
-        //         //         elem_size, "---", 0);
-        //         printf("Error allocating memory.");
-        //     }
-        // #endif
-
-
-        //     return mem;
-        // }
-
+      
         void extract_cepstral_mean() {
             
                 cmn_t *cmn = _ps->acmod->fcb->cmn_struct;
@@ -1209,9 +1223,9 @@ class XYZ_Batch {
         ps_plus_reinit(void) //(ps_decoder_t *ps, cmd_ln_t *config, void *buffer, size_t size) // buffer for jsgf grammar
         {
 
-            // using namespace std::chrono;
-            // high_resolution_clock::time_point start;
-            // high_resolution_clock::time_point end;
+            using namespace std::chrono;
+            high_resolution_clock::time_point start;
+            high_resolution_clock::time_point end;
 	        
             
             
@@ -1279,7 +1293,7 @@ class XYZ_Batch {
             
             /* Acoustic model (this is basically everything that
             * uttproc.c, senscr.c, and others used to do) */
-            if ((_ps->acmod = acmod_init(_ps->config, _ps->lmath, NULL, NULL)) == NULL) //~6ms !
+            if ((_ps->acmod = _acmod_init(_ps->config, _ps->lmath, NULL, NULL)) == NULL) //~6ms !
                 return -1;
             
             
@@ -1398,8 +1412,8 @@ class XYZ_Batch {
             /* Initialize performance timer. */
             _ps->perf.name = "decode";
             ptmr_init(&_ps->perf);
-            //end=high_resolution_clock::now();
-             //NEED TO KNOW WHAT CONSUMES THE MOST:
+            // end=high_resolution_clock::now();
+            //  //NEED TO KNOW WHAT CONSUMES THE MOST:
             // auto dur_ms = duration<double, std::milli>(end - start).count();
             // printf("\t\t\t\t %lfms\n", dur_ms);
 
@@ -1487,9 +1501,881 @@ class XYZ_Batch {
             tmp = fopen(path, "rb");
             if (tmp) fclose(tmp);
             return (tmp != NULL);
-        }               
+        }     
+// solving possible race conidtion in acmod_init:
+        acmod_t *
+        _acmod_init(cmd_ln_t *config, logmath_t *lmath, fe_t *fe, feat_t *fcb)
+        {
+            acmod_t *acmod;
+
+            acmod = (acmod_t*)ckd_calloc(1, sizeof(*acmod));
+            acmod->config = cmd_ln_retain(config);
+            acmod->lmath = lmath;
+            acmod->state = ACMOD_IDLE;
+
+            /* Initialize feature computation. */
+            if (fe) {
+                if (_acmod_fe_mismatch(acmod, fe))
+                    goto error_out;
+                fe_retain(fe);
+                acmod->fe = fe;
+            }
+            else {
+                /* Initialize a new front end. */
+                acmod->fe = _fe_init_auto_r(config);
+                if (acmod->fe == NULL)
+                    goto error_out;
+                if (_acmod_fe_mismatch(acmod, acmod->fe))
+                    goto error_out;
+            }
+            if (fcb) {
+                if (_acmod_feat_mismatch(acmod, fcb))
+                    goto error_out;
+                feat_retain(fcb);
+                acmod->fcb = fcb;
+            }
+            else {
+                /* Initialize a new fcb. */
+                if (_acmod_init_feat(acmod) < 0)
+                    goto error_out;
+            }
+
+            /* Load acoustic model parameters. */
+            if (_acmod_init_am(acmod) < 0)
+                goto error_out;
+
+
+            /* The MFCC buffer needs to be at least as large as the dynamic
+            * feature window.  */
+            acmod->n_mfc_alloc = acmod->fcb->window_size * 2 + 1;
+            acmod->mfc_buf = (mfcc_t **)
+                ckd_calloc_2d(acmod->n_mfc_alloc, acmod->fcb->cepsize,
+                            sizeof(**acmod->mfc_buf));
+
+            /* Feature buffer has to be at least as large as MFCC buffer. */
+            acmod->n_feat_alloc = acmod->n_mfc_alloc + cmd_ln_int32_r(config, "-pl_window");
+            acmod->feat_buf = feat_array_alloc(acmod->fcb, acmod->n_feat_alloc);
+            acmod->framepos = (long int*)ckd_calloc(acmod->n_feat_alloc, sizeof(*acmod->framepos));
+
+            acmod->utt_start_frame = 0;
+
+            /* Senone computation stuff. */
+            acmod->senone_scores = (int16*)ckd_calloc(bin_mdef_n_sen(acmod->mdef),
+                                                            sizeof(*acmod->senone_scores));
+            acmod->senone_active_vec = (bitvec_t*)bitvec_alloc(bin_mdef_n_sen(acmod->mdef));
+            acmod->senone_active = (uint8*)ckd_calloc(bin_mdef_n_sen(acmod->mdef),
+                                                            sizeof(*acmod->senone_active));
+            acmod->log_zero = logmath_get_zero(acmod->lmath);
+            acmod->compallsen = cmd_ln_boolean_r(config, "-compallsen");
+            return acmod;
+
+        error_out:
+            acmod_free(acmod);
+            return NULL;
+        }   
+
+        int
+        _acmod_fe_mismatch(acmod_t *acmod, fe_t *fe)
+        {
+            /* Output vector dimension needs to be the same. */
+            if (cmd_ln_int32_r(acmod->config, "-ceplen") != fe_get_output_size(fe)) {
+                E_ERROR("Configured feature length %d doesn't match feature "
+                        "extraction output size %d\n",
+                        cmd_ln_int32_r(acmod->config, "-ceplen"),
+                        fe_get_output_size(fe));
+                return TRUE;
+            }
+            /* Feature parameters need to be the same. */
+            /* ... */
+            return FALSE;
+        }
+
+        int
+        _acmod_feat_mismatch(acmod_t *acmod, feat_t *fcb)
+        {
+            /* Feature type needs to be the same. */
+            if (0 != strcmp(cmd_ln_str_r(acmod->config, "-feat"), feat_name(fcb)))
+                return TRUE;
+            /* Input vector dimension needs to be the same. */
+            if (cmd_ln_int32_r(acmod->config, "-ceplen") != feat_cepsize(fcb))
+                return TRUE;
+            /* FIXME: Need to check LDA and stuff too. */
+            return FALSE;
+        }
+
+        static int
+        _acmod_init_feat(acmod_t *acmod)
+        {
+            acmod->fcb =
+                feat_init(cmd_ln_str_r(acmod->config, "-feat"),
+                        cmn_type_from_str(cmd_ln_str_r(acmod->config,"-cmn")),
+                        cmd_ln_boolean_r(acmod->config, "-varnorm"),
+                        agc_type_from_str(cmd_ln_str_r(acmod->config, "-agc")),
+                        1, cmd_ln_int32_r(acmod->config, "-ceplen"));
+            if (acmod->fcb == NULL)
+                return -1;
+
+            if (cmd_ln_str_r(acmod->config, "_lda")) {
+                E_INFO("Reading linear feature transformation from %s\n",
+                    cmd_ln_str_r(acmod->config, "_lda"));
+                if (feat_read_lda(acmod->fcb,
+                                cmd_ln_str_r(acmod->config, "_lda"),
+                                cmd_ln_int32_r(acmod->config, "-ldadim")) < 0)
+                    return -1;
+            }
+
+            if (cmd_ln_str_r(acmod->config, "-svspec")) {
+                int32 **subvecs;
+                E_INFO("Using subvector specification %s\n",
+                    cmd_ln_str_r(acmod->config, "-svspec"));
+                if ((subvecs = parse_subvecs(cmd_ln_str_r(acmod->config, "-svspec"))) == NULL)
+                    return -1;
+                if ((feat_set_subvecs(acmod->fcb, subvecs)) < 0)
+                    return -1;
+            }
+
+            if (cmd_ln_exists_r(acmod->config, "-agcthresh")
+                && 0 != strcmp(cmd_ln_str_r(acmod->config, "-agc"), "none")) {
+                agc_set_threshold(acmod->fcb->agc_struct,
+                                cmd_ln_float32_r(acmod->config, "-agcthresh"));
+            }
+
+            if (acmod->fcb->cmn_struct
+                && cmd_ln_exists_r(acmod->config, "-cmninit")) {
+                char *c, *cc, *vallist;
+                int32 nvals;
+
+                vallist = ckd_salloc(cmd_ln_str_r(acmod->config, "-cmninit"));
+                c = vallist;
+                nvals = 0;
+                while (nvals < acmod->fcb->cmn_struct->veclen
+                    && (cc = strchr(c, ',')) != NULL) {
+                    *cc = '\0';
+                    acmod->fcb->cmn_struct->cmn_mean[nvals] = FLOAT2MFCC(atof_c(c));
+                    c = cc + 1;
+                    ++nvals;
+                }
+                if (nvals < acmod->fcb->cmn_struct->veclen && *c != '\0') {
+                    acmod->fcb->cmn_struct->cmn_mean[nvals] = FLOAT2MFCC(atof_c(c));
+                }
+                ckd_free(vallist);
+            }
+            return 0;
+        }
+
+        static int
+        _acmod_init_am(acmod_t *acmod)
+        {
+            char const *mdeffn, *tmatfn, *mllrfn, *hmmdir;
+
+            /* Read model definition. */
+            if ((mdeffn = cmd_ln_str_r(acmod->config, "_mdef")) == NULL) {
+                if ((hmmdir = cmd_ln_str_r(acmod->config, "-hmm")) == NULL)
+                    E_ERROR("Acoustic model definition is not specified either "
+                            "with -mdef option or with -hmm\n");
+                else
+                    E_ERROR("Folder '%s' does not contain acoustic model "
+                            "definition 'mdef'\n", hmmdir);
+
+                return -1;
+            }
+
+            if ((acmod->mdef = bin_mdef_read(acmod->config, mdeffn)) == NULL) {
+                E_ERROR("Failed to read acoustic model definition from %s\n", mdeffn);
+                return -1;
+            }
+
+            /* Read transition matrices. */
+            if ((tmatfn = cmd_ln_str_r(acmod->config, "_tmat")) == NULL) {
+                E_ERROR("No tmat file specified\n");
+                return -1;
+            }
+            acmod->tmat = tmat_init(tmatfn, acmod->lmath,
+                                    cmd_ln_float32_r(acmod->config, "-tmatfloor"),
+                                    TRUE);
+
+            /* Read the acoustic models. */
+            if ((cmd_ln_str_r(acmod->config, "_mean") == NULL)
+                || (cmd_ln_str_r(acmod->config, "_var") == NULL)
+                || (cmd_ln_str_r(acmod->config, "_tmat") == NULL)) {
+                E_ERROR("No mean/var/tmat files specified\n");
+                return -1;
+            }
+
+            if (cmd_ln_str_r(acmod->config, "_senmgau")) {
+                E_INFO("Using general multi-stream GMM computation\n");
+                acmod->mgau = ms_mgau_init(acmod, acmod->lmath, acmod->mdef);
+                if (acmod->mgau == NULL)
+                    return -1;
+            }
+            else {
+                E_INFO("Attempting to use PTM computation module\n");
+                if ((acmod->mgau = ptm_mgau_init(acmod, acmod->mdef)) == NULL) {
+                    E_INFO("Attempting to use semi-continuous computation module\n");
+                    if ((acmod->mgau = s2_semi_mgau_init(acmod)) == NULL) {
+                        E_INFO("Falling back to general multi-stream GMM computation\n");
+                        acmod->mgau = ms_mgau_init(acmod, acmod->lmath, acmod->mdef);
+                        if (acmod->mgau == NULL) {
+                            E_ERROR("Failed to read acoustic model\n");
+                            return -1;
+                        }
+                    }
+                }
+            }
+
+            /* If there is an MLLR transform, apply it. */
+            if ((mllrfn = cmd_ln_str_r(acmod->config, "-mllr"))) {
+                ps_mllr_t *mllr = ps_mllr_read(mllrfn);
+                if (mllr == NULL)
+                    return -1;
+                acmod_update_mllr(acmod, mllr);
+            }
+
+            return 0;
+        }
+
+        fe_t *
+        _fe_init_auto_r(cmd_ln_t *config)
+        {
+            fe_t *fe;
+            int prespch_frame_len;
+
+            fe = (fe_t*)ckd_calloc(1, sizeof(*fe));
+            fe->refcount = 1;
+
+            /* transfer params to front end */
+            if (_fe_parse_general_params(cmd_ln_retain(config), fe) < 0) {
+                fe_free(fe);
+                return NULL;
+            }
+
+            /* compute remaining fe parameters */
+            /* We add 0.5 so approximate the float with the closest
+            * integer. E.g., 2.3 is truncate to 2, whereas 3.7 becomes 4
+            */
+            fe->frame_shift = (int32) (fe->sampling_rate / fe->frame_rate + 0.5);
+            fe->frame_size = (int32) (fe->window_length * fe->sampling_rate + 0.5);
+            fe->pre_emphasis_prior = 0;
+            
+            fe_start_stream(fe);
+
+            assert (fe->frame_shift > 1);
+
+            if (fe->frame_size < fe->frame_shift) {
+                E_ERROR
+                    ("Frame size %d (-wlen) must be greater than frame shift %d (-frate)\n",
+                    fe->frame_size, fe->frame_shift);
+                fe_free(fe);
+                return NULL;
+            }
+
+
+            if (fe->frame_size > (fe->fft_size)) {
+                E_ERROR
+                    ("Number of FFT points has to be a power of 2 higher than %d, it is %d\n",
+                    fe->frame_size, fe->fft_size);
+                fe_free(fe);
+                return NULL;
+            }
+
+            if (fe->dither)
+                _fe_init_dither(fe->dither_seed); //static variable dependency
+
+            /* establish buffers for overflow samps and hamming window */
+            fe->overflow_samps = (int16*)ckd_calloc(fe->frame_size, sizeof(int16));
+            fe->hamming_window = (window_t*)ckd_calloc(fe->frame_size/2, sizeof(window_t));
+
+            /* create hamming window */
+            fe_create_hamming(fe->hamming_window, fe->frame_size);
+
+            /* init and fill appropriate filter structure */
+            fe->mel_fb = (melfb_t*)ckd_calloc(1, sizeof(*fe->mel_fb));
+
+            /* transfer params to mel fb */
+            _fe_parse_melfb_params(config, fe, fe->mel_fb);
+            
+            if (fe->mel_fb->upper_filt_freq > fe->sampling_rate / 2 + 1.0) {
+            E_ERROR("Upper frequency %.1f is higher than samprate/2 (%.1f)\n", 
+                fe->mel_fb->upper_filt_freq, fe->sampling_rate / 2);
+            fe_free(fe);
+            return NULL;
+            }
+            
+            fe_build_melfilters(fe->mel_fb);
+
+            fe_compute_melcosine(fe->mel_fb);
+            if (fe->remove_noise || fe->remove_silence)
+                fe->noise_stats = fe_init_noisestats(fe->mel_fb->num_filters);
+
+            fe->vad_data = (vad_data_t*)ckd_calloc(1, sizeof(*fe->vad_data));
+            prespch_frame_len = fe->log_spec != RAW_LOG_SPEC ? fe->num_cepstra : fe->mel_fb->num_filters;
+            fe->vad_data->prespch_buf = fe_prespch_init(fe->pre_speech + 1, prespch_frame_len, fe->frame_shift);
+
+            /* Create temporary FFT, spectrum and mel-spectrum buffers. */
+            /* FIXME: Gosh there are a lot of these. */
+            fe->spch = (int16*)ckd_calloc(fe->frame_size, sizeof(*fe->spch));
+            fe->frame = (frame_t*)ckd_calloc(fe->fft_size, sizeof(*fe->frame));
+            fe->spec = (powspec_t*)ckd_calloc(fe->fft_size, sizeof(*fe->spec));
+            fe->mfspec = (powspec_t*)ckd_calloc(fe->mel_fb->num_filters, sizeof(*fe->mfspec));
+
+            /* create twiddle factors */
+            fe->ccc = (frame_t*)ckd_calloc(fe->fft_size / 4, sizeof(*fe->ccc));
+            fe->sss = (frame_t*)ckd_calloc(fe->fft_size / 4, sizeof(*fe->sss));
+            fe_create_twiddle(fe);
+
+            if (cmd_ln_boolean_r(config, "-verbose")) {
+                _fe_print_current(fe);
+            }
+
+            /*** Initialize the overflow buffers ***/
+            fe_start_utt(fe);
+            return fe;
+        }   
+
+        void
+        _fe_init_dither(int32 seed)
+        {
+            E_INFO("Using %d as the seed.\n", seed);
+            //s3_rand_seed(seed);//just a macro for:
+            _genrand.init_genrand(seed);
+        }
+
+        //static int
+        int
+        _fe_parse_melfb_params(cmd_ln_t *config, fe_t *fe, melfb_t * mel)
+        {
+            mel->sampling_rate = fe->sampling_rate;
+            mel->fft_size = fe->fft_size;
+            mel->num_cepstra = fe->num_cepstra;
+            mel->num_filters = cmd_ln_int32_r(config, "-nfilt");
+
+            if (fe->log_spec)
+                fe->feature_dimension = mel->num_filters;
+            else
+                fe->feature_dimension = fe->num_cepstra;
+
+            mel->upper_filt_freq = cmd_ln_float32_r(config, "-upperf");
+            mel->lower_filt_freq = cmd_ln_float32_r(config, "-lowerf");
+
+            mel->doublewide = cmd_ln_boolean_r(config, "-doublebw");
+
+            mel->warp_type = cmd_ln_str_r(config, "-warp_type");
+            mel->warp_params = cmd_ln_str_r(config, "-warp_params");
+            mel->lifter_val = cmd_ln_int32_r(config, "-lifter");
+
+            mel->unit_area = cmd_ln_boolean_r(config, "-unit_area");
+            mel->round_filters = cmd_ln_boolean_r(config, "-round_filters");
+
+            if (_fe_warp.fe_warp_set(mel, mel->warp_type) != FE_SUCCESS) {
+                E_ERROR("Failed to initialize the warping function.\n");
+                return -1;
+            }
+            _fe_warp.fe_warp_set_parameters(mel, mel->warp_params, mel->sampling_rate);
+            return 0;
+        }
+
+        
+  
+        int
+        _fe_parse_general_params(cmd_ln_t *config, fe_t * fe)
+        {
+            int j, frate;
+
+            fe->config = config;
+            fe->sampling_rate = cmd_ln_float32_r(config, "-samprate");
+            frate = cmd_ln_int32_r(config, "-frate");
+            if (frate > MAX_INT16 || frate > fe->sampling_rate || frate < 1) {
+                E_ERROR
+                    ("Frame rate %d can not be bigger than sample rate %.02f\n",
+                    frate, fe->sampling_rate);
+                return -1;
+            }
+
+            fe->frame_rate = (int16)frate;
+            if (cmd_ln_boolean_r(config, "-dither")) {
+                fe->dither = 1;
+                fe->dither_seed = cmd_ln_int32_r(config, "-seed");
+            }
+        #ifdef WORDS_BIGENDIAN
+            fe->swap = strcmp("big", cmd_ln_str_r(config, "-input_endian")) == 0 ? 0 : 1;
+        #else        
+            fe->swap = strcmp("little", cmd_ln_str_r(config, "-input_endian")) == 0 ? 0 : 1;
+        #endif
+            fe->window_length = cmd_ln_float32_r(config, "-wlen");
+            fe->pre_emphasis_alpha = cmd_ln_float32_r(config, "-alpha");
+
+            fe->num_cepstra = (uint8)cmd_ln_int32_r(config, "-ncep");
+            fe->fft_size = (int16)cmd_ln_int32_r(config, "-nfft");
+
+            /* Check FFT size, compute FFT order (log_2(n)) */
+            for (j = fe->fft_size, fe->fft_order = 0; j > 1; j >>= 1, fe->fft_order++) {
+                if (((j % 2) != 0) || (fe->fft_size <= 0)) {
+                    E_ERROR("fft: number of points must be a power of 2 (is %d)\n",
+                            fe->fft_size);
+                    return -1;
+                }
+            }
+            /* Verify that FFT size is greater or equal to window length. */
+            if (fe->fft_size < (int)(fe->window_length * fe->sampling_rate)) {
+                E_ERROR("FFT: Number of points must be greater or equal to frame size (%d samples)\n",
+                        (int)(fe->window_length * fe->sampling_rate));
+                return -1;
+            }
+
+            fe->pre_speech = (int16)cmd_ln_int32_r(config, "-vad_prespeech");
+            fe->post_speech = (int16)cmd_ln_int32_r(config, "-vad_postspeech");
+            fe->start_speech = (int16)cmd_ln_int32_r(config, "-vad_startspeech");
+            fe->vad_threshold = cmd_ln_float32_r(config, "-vad_threshold");
+
+            fe->remove_dc = cmd_ln_boolean_r(config, "-remove_dc");
+            fe->remove_noise = cmd_ln_boolean_r(config, "-remove_noise");
+            fe->remove_silence = cmd_ln_boolean_r(config, "-remove_silence");
+
+            if (0 == strcmp(cmd_ln_str_r(config, "-transform"), "dct"))
+                fe->transform = DCT_II;
+            else if (0 == strcmp(cmd_ln_str_r(config, "-transform"), "legacy"))
+                fe->transform = LEGACY_DCT;
+            else if (0 == strcmp(cmd_ln_str_r(config, "-transform"), "htk"))
+                fe->transform = DCT_HTK;
+            else {
+                E_ERROR("Invalid transform type (values are 'dct', 'legacy', 'htk')\n");
+                return -1;
+            }
+
+            if (cmd_ln_boolean_r(config, "-logspec"))
+                fe->log_spec = RAW_LOG_SPEC;
+            if (cmd_ln_boolean_r(config, "-smoothspec"))
+                fe->log_spec = SMOOTH_LOG_SPEC;
+
+            return 0;
+        }
+
+        void
+        _fe_print_current(fe_t const *fe)
+        {
+            E_INFO("Current FE Parameters:\n");
+            E_INFO("\tSampling Rate:             %f\n", fe->sampling_rate);
+            E_INFO("\tFrame Size:                %d\n", fe->frame_size);
+            E_INFO("\tFrame Shift:               %d\n", fe->frame_shift);
+            E_INFO("\tFFT Size:                  %d\n", fe->fft_size);
+            E_INFO("\tLower Frequency:           %g\n",
+                fe->mel_fb->lower_filt_freq);
+            E_INFO("\tUpper Frequency:           %g\n",
+                fe->mel_fb->upper_filt_freq);
+            E_INFO("\tNumber of filters:         %d\n", fe->mel_fb->num_filters);
+            E_INFO("\tNumber of Overflow Samps:  %d\n", fe->num_overflow_samps);
+            E_INFO("Will %sremove DC offset at frame level\n",
+                fe->remove_dc ? "" : "not ");
+            if (fe->dither) {
+                E_INFO("Will add dither to audio\n");
+                E_INFO("Dither seeded with %d\n", fe->dither_seed);
+            }
+            else {
+                E_INFO("Will not add dither to audio\n");
+            }
+            if (fe->mel_fb->lifter_val) {
+                E_INFO("Will apply sine-curve liftering, period %d\n",
+                    fe->mel_fb->lifter_val);
+            }
+            E_INFO("Will %snormalize filters to unit area\n",
+                fe->mel_fb->unit_area ? "" : "not ");
+            E_INFO("Will %sround filter frequencies to DFT points\n",
+                fe->mel_fb->round_filters ? "" : "not ");
+            E_INFO("Will %suse double bandwidth in mel filter\n",
+                fe->mel_fb->doublewide ? "" : "not ");
+        }
 
 
 
+        prespch_buf_t *
+        _fe_prespch_init(int num_frames, int num_cepstra, int num_samples)
+        {
+            prespch_buf_t *prespch_buf; 
+
+            std::shared_ptr<prespch_buf_t> prespch_buf_ptr; //https://stackoverflow.com/questions/44963201/when-does-an-incomplete-type-error-occur-in-c
+
+            prespch_buf = (prespch_buf_t*) ckd_calloc(1, sizeof(std::shared_ptr<prespch_buf_t>));
+
+            prespch_buf->num_cepstra = num_cepstra;
+            prespch_buf_ptr->num_frames_cep = num_frames;
+            prespch_buf_ptr->num_samples = num_samples;
+            prespch_buf_ptr->num_frames_pcm = 0;
+
+            prespch_buf_ptr->cep_write_ptr = 0;
+            prespch_buf_ptr->cep_read_ptr = 0;
+            prespch_buf_ptr->ncep = 0;
+            
+            prespch_buf_ptr->pcm_write_ptr = 0;
+            prespch_buf_ptr->pcm_read_ptr = 0;
+            prespch_buf_ptr->npcm = 0;
+
+            prespch_buf_ptr->cep_buf = (mfcc_t **)
+                ckd_calloc_2d(num_frames, num_cepstra,
+                            sizeof(**prespch_buf_ptr->cep_buf));
+
+            prespch_buf_ptr->pcm_buf = (int16 *)
+                ckd_calloc(prespch_buf_ptr->num_frames_pcm * prespch_buf_ptr->num_samples,
+                        sizeof(int16));
+
+            return prespch_buf;
+        }
+
+
+        int
+        _fe_process_frames(fe_t *fe,
+                        int16 const **inout_spch,
+                        size_t *inout_nsamps,
+                        mfcc_t **buf_cep,
+                        int32 *inout_nframes,
+                        int32 *out_frameidx)
+        {
+            return _fe_process_frames_ext(fe, inout_spch, inout_nsamps, buf_cep, inout_nframes, NULL, NULL, out_frameidx);
+        }
+
+
+        int 
+        _fe_process_frames_ext(fe_t *fe,
+                        int16 const **inout_spch,
+                        size_t *inout_nsamps,
+                        mfcc_t **buf_cep,
+                        int32 *inout_nframes,
+                        int16 *voiced_spch,
+                        int32 *voiced_spch_nsamps,
+                        int32 *out_frameidx)
+        {
+            int outidx, n_overflow, orig_n_overflow;
+            int16 const *orig_spch;
+            size_t orig_nsamps;
+            
+            /* The logic here is pretty complex, please be careful with modifications */
+
+            /* FIXME: Dump PCM data if needed */
+
+            /* In the special case where there is no output buffer, return the
+            * maximum number of frames which would be generated. */
+            if (buf_cep == NULL) {
+                if (*inout_nsamps + fe->num_overflow_samps < (size_t)fe->frame_size)
+                    *inout_nframes = 0;
+                else 
+                    *inout_nframes = 1
+                        + ((*inout_nsamps + fe->num_overflow_samps - fe->frame_size)
+                        / fe->frame_shift);
+                if (!fe->vad_data->in_speech)
+                    *inout_nframes += fe_prespch_ncep(fe->vad_data->prespch_buf);
+                return *inout_nframes;
+            }
+
+            if (out_frameidx)
+                *out_frameidx = 0;
+
+            /* Are there not enough samples to make at least 1 frame? */
+            if (*inout_nsamps + fe->num_overflow_samps < (size_t)fe->frame_size) {
+                if (*inout_nsamps > 0) {
+                    /* Append them to the overflow buffer. */
+                    memcpy(fe->overflow_samps + fe->num_overflow_samps,
+                        *inout_spch, *inout_nsamps * (sizeof(int16)));
+                    fe->num_overflow_samps += *inout_nsamps;
+                fe->num_processed_samps += *inout_nsamps;
+                    *inout_spch += *inout_nsamps;
+                    *inout_nsamps = 0;
+                }
+                /* We produced no frames of output, sorry! */
+                *inout_nframes = 0;
+                return 0;
+            }
+
+            /* Can't write a frame?  Then do nothing! */
+            if (*inout_nframes < 1) {
+                *inout_nframes = 0;
+                return 0;
+            }
+
+            /* Index of output frame. */
+            outidx = 0;
+
+            /* Try to read from prespeech buffer */
+            if (fe->vad_data->in_speech && fe_prespch_ncep(fe->vad_data->prespch_buf) > 0) {
+                outidx = _fe_copy_from_prespch(fe, inout_nframes, buf_cep, outidx);
+                if ((*inout_nframes) < 1) {
+                    /* mfcc buffer is filled from prespeech buffer */
+                    *inout_nframes = outidx;
+                    return 0;
+                }
+            }
+
+            /* Keep track of the original start of the buffer. */
+            orig_spch = *inout_spch;
+            orig_nsamps = *inout_nsamps;
+            orig_n_overflow = fe->num_overflow_samps;
+
+            /* Start processing, taking care of any incoming overflow. */
+            if (fe->num_overflow_samps > 0) {
+                int offset = fe->frame_size - fe->num_overflow_samps;
+                /* Append start of spch to overflow samples to make a full frame. */
+                memcpy(fe->overflow_samps + fe->num_overflow_samps,
+                    *inout_spch, offset * sizeof(**inout_spch));
+                _fe_read_frame(fe, fe->overflow_samps, fe->frame_size);
+                /* Update input-output pointers and counters. */
+                *inout_spch += offset;
+                *inout_nsamps -= offset;
+            } else {
+                _fe_read_frame(fe, *inout_spch, fe->frame_size);
+                /* Update input-output pointers and counters. */
+                *inout_spch += fe->frame_size;
+                *inout_nsamps -= fe->frame_size;
+            }
+
+            fe_write_frame(fe, buf_cep[outidx], voiced_spch != NULL);
+            outidx = _fe_check_prespeech(fe, inout_nframes, buf_cep, outidx, out_frameidx, inout_nsamps, orig_nsamps);
+
+            /* Process all remaining frames. */
+            while (*inout_nframes > 0 && *inout_nsamps >= (size_t)fe->frame_shift) {
+                _fe_shift_frame(fe, *inout_spch, fe->frame_shift);
+                fe_write_frame(fe, buf_cep[outidx], voiced_spch != NULL);
+
+            outidx = _fe_check_prespeech(fe, inout_nframes, buf_cep, outidx, out_frameidx, inout_nsamps, orig_nsamps);
+
+                /* Update input-output pointers and counters. */
+                *inout_spch += fe->frame_shift;
+                *inout_nsamps -= fe->frame_shift;
+            }
+
+            /* How many relevant overflow samples are there left? */
+            if (fe->num_overflow_samps <= 0) {
+                /* Maximum number of overflow samples past *inout_spch to save. */
+                n_overflow = *inout_nsamps;
+                if (n_overflow > fe->frame_shift)
+                    n_overflow = fe->frame_shift;
+                fe->num_overflow_samps = fe->frame_size - fe->frame_shift;
+                /* Make sure this isn't an illegal read! */
+                if (fe->num_overflow_samps > *inout_spch - orig_spch)
+                    fe->num_overflow_samps = *inout_spch - orig_spch;
+                fe->num_overflow_samps += n_overflow;
+                if (fe->num_overflow_samps > 0) {
+                    memcpy(fe->overflow_samps,
+                        *inout_spch - (fe->frame_size - fe->frame_shift),
+                        fe->num_overflow_samps * sizeof(**inout_spch));
+                    /* Update the input pointer to cover this stuff. */
+                    *inout_spch += n_overflow;
+                    *inout_nsamps -= n_overflow;
+                }
+            } else {
+                /* There is still some relevant data left in the overflow buffer. */
+                /* Shift existing data to the beginning. */
+                memmove(fe->overflow_samps,
+                        fe->overflow_samps + orig_n_overflow - fe->num_overflow_samps,
+                        fe->num_overflow_samps * sizeof(*fe->overflow_samps));
+                /* Copy in whatever we had in the original speech buffer. */
+                n_overflow = *inout_spch - orig_spch + *inout_nsamps;
+                if (n_overflow > fe->frame_size - fe->num_overflow_samps)
+                    n_overflow = fe->frame_size - fe->num_overflow_samps;
+                memcpy(fe->overflow_samps + fe->num_overflow_samps,
+                    orig_spch, n_overflow * sizeof(*orig_spch));
+                fe->num_overflow_samps += n_overflow;
+                /* Advance the input pointers. */
+                if (n_overflow > *inout_spch - orig_spch) {
+                    n_overflow -= (*inout_spch - orig_spch);
+                    *inout_spch += n_overflow;
+                    *inout_nsamps -= n_overflow;
+                }
+            }
+
+            /* Finally update the frame counter with the number of frames
+            * and global sample counter with number of samples we procesed */
+            *inout_nframes = outidx; /* FIXME: Not sure why I wrote it this way... */
+            fe->num_processed_samps += orig_nsamps - *inout_nsamps;
+
+            return 0;
+        }
+
+        /**
+         * Copy frames collected in prespeech buffer
+         */
+        static int
+        _fe_copy_from_prespch(fe_t *fe, int32 *inout_nframes, mfcc_t **buf_cep, int outidx)
+        {
+            while ((*inout_nframes) > 0 && fe_prespch_read_cep(fe->vad_data->prespch_buf, buf_cep[outidx]) > 0) {
+                outidx++;
+                    (*inout_nframes)--;
+            }
+            return outidx;    
+        }
+
+        /**
+         * Update pointers after we processed a frame. A complex logic used in two places in fe_process_frames
+         */
+        static int
+        _fe_check_prespeech(fe_t *fe, int32 *inout_nframes, mfcc_t **buf_cep, int outidx, int32 *out_frameidx, size_t *inout_nsamps, int orig_nsamps)
+        {
+            if (fe->vad_data->in_speech) {    
+            if (fe_prespch_ncep(fe->vad_data->prespch_buf) > 0) {
+
+                    /* Previous frame triggered vad into speech state. Last frame is in the end of 
+                    prespeech buffer, so overwrite it */
+                    outidx = _fe_copy_from_prespch(fe, inout_nframes, buf_cep, outidx);
+
+                    /* Sets the start frame for the returned data so that caller can update timings */
+                if (out_frameidx) {
+                        *out_frameidx = (fe->num_processed_samps + orig_nsamps - *inout_nsamps) / fe->frame_shift - fe->pre_speech;
+                    }
+                } else {
+                outidx++;
+                    (*inout_nframes)--;
+                }
+            }
+            /* Amount of data behind the original input which is still needed. */
+            if (fe->num_overflow_samps > 0)
+                fe->num_overflow_samps -= fe->frame_shift;
+
+            return outidx;
+        }
+
+
+        int
+        _fe_read_frame(fe_t * fe, int16 const *in, int32 len)
+        {
+            int i;
+
+            if (len > fe->frame_size)
+                len = fe->frame_size;
+
+            /* Read it into the raw speech buffer. */
+            memcpy(fe->spch, in, len * sizeof(*in));
+            /* Swap and dither if necessary. */
+            if (fe->swap)
+                for (i = 0; i < len; ++i)
+                    SWAP_INT16(&fe->spch[i]);
+            if (fe->dither)
+                for (i = 0; i < len; ++i)
+                    //fe->spch[i] += (int16) ((!(s3_rand_int31() % 4)) ? 1 : 0); //Race condition 
+                    fe->spch[i] += (int16) ((!(_genrand.genrand_int31() % 4)) ? 1 : 0); //Race condition
+
+            return _fe_spch_to_frame(fe, len);
+        }
+
+        static int
+        _fe_spch_to_frame(fe_t * fe, int len)
+        {
+            /* Copy to the frame buffer. */
+            if (fe->pre_emphasis_alpha != 0.0) {
+                _fe_pre_emphasis(fe->spch, fe->frame, len,
+                                fe->pre_emphasis_alpha, fe->pre_emphasis_prior);
+                if (len >= fe->frame_shift)
+                    fe->pre_emphasis_prior = fe->spch[fe->frame_shift - 1];
+                else
+                    fe->pre_emphasis_prior = fe->spch[len - 1];
+            }
+            else
+                _fe_short_to_frame(fe->spch, fe->frame, len);
+
+            /* Zero pad up to FFT size. */
+            memset(fe->frame + len, 0, (fe->fft_size - len) * sizeof(*fe->frame));
+
+            /* Window. */
+            _fe_hamming_window(fe->frame, fe->hamming_window, fe->frame_size,
+                            fe->remove_dc);
+
+            return len;
+        }
+
+        static void
+        _fe_pre_emphasis(int16 const *in, frame_t * out, int32 len,
+                        float32 factor, int16 prior)
+        {
+            int i;
+
+        #if defined(FIXED_POINT)
+            fixed32 fxd_alpha = FLOAT2FIX(factor);
+            out[0] = ((fixed32) in[0] << DEFAULT_RADIX) - (prior * fxd_alpha);
+            for (i = 1; i < len; ++i)
+                out[i] = ((fixed32) in[i] << DEFAULT_RADIX)
+                    - (fixed32) in[i - 1] * fxd_alpha;
+        #else
+            out[0] = (frame_t) in[0] - (frame_t) prior *factor;
+            for (i = 1; i < len; i++)
+                out[i] = (frame_t) in[i] - (frame_t) in[i - 1] * factor;
+        #endif
+        }
+
+        static void
+        _fe_short_to_frame(int16 const *in, frame_t * out, int32 len)
+        {
+            int i;
+
+        #if defined(FIXED_POINT)
+            for (i = 0; i < len; i++)
+                out[i] = (int32) in[i] << DEFAULT_RADIX;
+        #else                           /* FIXED_POINT */
+            for (i = 0; i < len; i++)
+                out[i] = (frame_t) in[i];
+        #endif                          /* FIXED_POINT */
+        }
+
+        static void
+        _fe_hamming_window(frame_t * in, window_t * window, int32 in_len,
+                        int32 remove_dc)
+        {
+            int i;
+
+            if (remove_dc) {
+                frame_t mean = 0;
+
+                for (i = 0; i < in_len; i++)
+                    mean += in[i];
+                mean /= in_len;
+                for (i = 0; i < in_len; i++)
+                    in[i] -= (frame_t) mean;
+            }
+
+            for (i = 0; i < in_len / 2; i++) {
+                in[i] = COSMUL(in[i], window[i]);
+                in[in_len - 1 - i] = COSMUL(in[in_len - 1 - i], window[i]);
+            }
+        }
+
+        int
+        _fe_shift_frame(fe_t * fe, int16 const *in, int32 len)
+        {
+            int offset, i;
+
+            if (len > fe->frame_shift)
+                len = fe->frame_shift;
+            offset = fe->frame_size - fe->frame_shift;
+
+            /* Shift data into the raw speech buffer. */
+            memmove(fe->spch, fe->spch + fe->frame_shift,
+                    offset * sizeof(*fe->spch));
+            memcpy(fe->spch + offset, in, len * sizeof(*fe->spch));
+            /* Swap and dither if necessary. */
+            if (fe->swap)
+                for (i = 0; i < len; ++i)
+                    SWAP_INT16(&fe->spch[offset + i]);
+            if (fe->dither)
+                for (i = 0; i < len; ++i)
+                    fe->spch[offset + i]
+                        //+= (int16) ((!(s3_rand_int31() % 4)) ? 1 : 0); //race condition
+                        += (int16) ((!(_genrand.genrand_int31() % 4)) ? 1 : 0); //race condition
+
+            return _fe_spch_to_frame(fe, offset + len);
+        }
+
+
+        int32
+        _fe_end_utt(fe_t * fe, mfcc_t * cepvector, int32 * nframes)
+        {
+            /* Process any remaining data, not very accurate for the VAD */
+            *nframes = 0;
+            if (fe->num_overflow_samps > 0) {
+                _fe_read_frame(fe, fe->overflow_samps, fe->num_overflow_samps);
+                fe_write_frame(fe, cepvector, FALSE);
+                if (fe->vad_data->in_speech)
+                    *nframes = 1;
+            }
+
+            /* reset overflow buffers... */
+            fe->num_overflow_samps = 0;
+
+            return 0;
+        }
 
 };//class XYZ_Batch

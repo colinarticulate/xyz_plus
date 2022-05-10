@@ -19,6 +19,8 @@ package xyz_plus
 #cgo CXXFLAGS: -g -O2
 //#cgo CXXFLAGS: -g -Wall -Og -ggdb
 #cgo CXXFLAGS: -Wno-unused-result -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
+#cgo CXXFLAGS: -I${SRCDIR}/xyzsphinxbase/fe
+#cgo CXXFLAGS: -I${SRCDIR}/xyzsphinxbase
 #cgo CXXFLAGS: -I${SRCDIR}/aside_ps_library
 #cgo CXXFLAGS: -I/usr/local/include/xyzsphinxbase
 #cgo CXXFLAGS: -I/usr/local/include/xyzpocketsphinx
