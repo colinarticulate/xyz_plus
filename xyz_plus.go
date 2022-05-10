@@ -16,7 +16,7 @@ package xyz_plus
 //#cgo pkg-config: xyzsphinxbase
 //#cgo pkg-config: xyzpocketsphinx
 
-#cgo CXXFLAGS: -g -O2
+#cgo CXXFLAGS: -g -O2 -std=c++11
 //#cgo CXXFLAGS: -g -Wall -Og -ggdb
 #cgo CXXFLAGS: -Wno-unused-result -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
 #cgo CXXFLAGS: -I${SRCDIR}/xyzsphinxbase/fe
