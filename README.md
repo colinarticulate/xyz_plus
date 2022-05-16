@@ -13,6 +13,9 @@ compiler: g++
 libraries: -lxyzsphinxbase, -lxyzsphinxad, -lxyzpocketsphinx (These libraries will be available after installing articulate-pocketsphinx in the system)    
 
 ## Versions  
+### v2.0.0  
+Adds error handling for runtime errors.
+
 ### v1.1.1  
 Solved possible race conditions. No race conditions detected by valgrind.  
 

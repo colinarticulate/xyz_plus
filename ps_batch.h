@@ -4,6 +4,9 @@
 #include <chrono>
 #include <math.h> 
 #include <memory>
+//for testing:
+#include <random>
+
 /* SphinxBase headers. */
 //#include <xyzsphinxbase/pio.h>
 // #include <xyzsphinxbase/err.h>
@@ -40,6 +43,7 @@
 //Re-doing API:
 #include "_genrand.h"
 #include "_fe_warp.h"
+#include "_ps_error.h"
 
 /*Denting API*/
 //ps:
@@ -272,7 +276,13 @@ static const arg_t batch_args_def[] = {
 #define UPPER_MASK 0x80000000UL /* most significant w-r bits */
 #define LOWER_MASK 0x7fffffffUL /* least significant r bits */
 
-
+//Impossible to translate C error logging system in C++. This is really bad:
+//Replaces E_FATAL macro:
+#define _BATCH_E_FATAL(...)                            \
+    do {                                                    \
+        _pserror.err_msg(ERR_FATAL, FILELINE, __VA_ARGS__); \
+        throw std::runtime_error(_pserror._msg);                  \
+    } while (0)
 
 class XYZ_Batch {
 
@@ -287,6 +297,9 @@ class XYZ_Batch {
 
         XYZ_SB_Genrand _genrand;
         XYZ_SB_FE_Warp _fe_warp;
+
+        //Errors from pocketsphinx:
+        PSErrorHandler _pserror;
      
     public:
         char _result[512];
@@ -344,7 +357,7 @@ class XYZ_Batch {
             }
 
             if ((ctl = cmd_ln_str_r(_config, "-ctl")) == NULL) {
-                E_FATAL("-ctl argument not present, nothing to do in batch mode!\n");
+                _BATCH_E_FATAL("-ctl argument not present, nothing to do in batch mode!\n");
             }
             // if ((ctlfh = fopen(ctl, "r")) == NULL) {
             //     E_FATAL_SYSTEM("Failed to open control file '%s'", ctl);
@@ -422,6 +435,18 @@ class XYZ_Batch {
 
         void process(){
              process_one_ctl_line(0, -1);
+
+            //  //TEST!!!!
+            // int max = 10;
+            // int min = 1;
+
+            // auto output = min + (rand() % static_cast<int>(max - min + 1));
+            // if (output < 5 ) {
+            //     _BATCH_E_FATAL("Throwing on purpose  --- %d\n", output);
+            //     //throw std::runtime_error(_pserror._msg);
+            // }
+
+           
         }
 
         void terminate(){
@@ -779,8 +804,8 @@ class XYZ_Batch {
 
         
 
-        static int
-        //int
+        //static int
+        int
         _acmod_process_full_cep(acmod_t *acmod,
                             mfcc_t ***inout_cep,
                             int *inout_n_frames)
@@ -796,7 +821,7 @@ class XYZ_Batch {
             if (acmod->n_feat_alloc < *inout_n_frames) {
 
                 if (*inout_n_frames > MAX_N_FRAMES)
-                    E_FATAL("Batch processing can not process more than %d frames "
+                    _BATCH_E_FATAL("Batch processing can not process more than %d frames " \
                             "at once, requested %d\n", MAX_N_FRAMES, *inout_n_frames);
 
                 feat_array_free(acmod->feat_buf);
