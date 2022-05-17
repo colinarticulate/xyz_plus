@@ -436,15 +436,15 @@ class XYZ_Batch {
         void process(){
              process_one_ctl_line(0, -1);
 
-             //TEST!!!!
-            int max = 10;
-            int min = 1;
+            //  //TEST!!!!
+            // int max = 10;
+            // int min = 1;
 
-            auto output = min + (rand() % static_cast<int>(max - min + 1));
-            if (output < 5 ) {
-                _BATCH_E_FATAL("Throwing on purpose  --- %d\n", output);
-                //throw std::runtime_error(_pserror._msg);
-            }
+            // auto output = min + (rand() % static_cast<int>(max - min + 1));
+            // if (output < 5 ) {
+            //     _BATCH_E_FATAL("Throwing on purpose  --- %d\n", output);
+            //     //throw std::runtime_error(_pserror._msg);
+            // }
 
            
         }
