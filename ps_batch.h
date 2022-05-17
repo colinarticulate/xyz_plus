@@ -554,10 +554,10 @@ class XYZ_Batch {
             /* If this file is seekable or maxsamps is specified, then decode
             * the whole thing at once. */
             if (maxsamps != -1) {
-                // data = (int16*)ckd_calloc(maxsamps, sizeof(*data));
-                // total = fread(data, sizeof(*data), maxsamps, rawfh);
-                // ps_process_raw(_ps, data, total, FALSE, TRUE);
-                // ckd_free(data);
+                data = (int16*)ckd_calloc(maxsamps, sizeof(*data));
+                total = fread(data, sizeof(*data), maxsamps, rawfh);
+                ps_process_raw(_ps, data, total, FALSE, TRUE);
+                ckd_free(data);
                 
             } else if ((pos = ftell(rawfh)) >= 0) {
                 fseek(rawfh, 0, SEEK_END);
