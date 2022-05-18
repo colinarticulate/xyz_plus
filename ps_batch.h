@@ -1,4 +1,3 @@
-#include <stdexcept>
 #include <limits>
 #include <iostream>
 #include <chrono>
@@ -6,6 +5,8 @@
 #include <memory>
 //for testing:
 #include <random>
+#include <exception>
+#include <stdexcept>
 
 /* SphinxBase headers. */
 //#include <xyzsphinxbase/pio.h>

@@ -9,6 +9,8 @@
 //for testing:
 #include <random>
 #include <time.h>
+#include <exception>
+#include <stdexcept>
 
 #ifdef HAVE_UNISTD_H
 #include <unistd.h>
