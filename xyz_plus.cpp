@@ -4,10 +4,16 @@
 #include <cstdlib>
 #include <exception>
 #include <stdexcept>
+#include <segvcatch.h>
+#include <iostream>
 
 
 #include "ps_continuous.h"
 #include "ps_batch.h"
+
+
+using namespace std;
+
 
 #ifdef __cplusplus
 extern "C" {
@@ -23,7 +29,9 @@ extern "C" {
 //int ps_plus_call2(void* jsgf_buffer, int jsgf_buffer_size, void* audio_buffer, int audio_buffer_size, int argc, char *argv[], char* result, int rsize){
 int _ps_continuous_call(char* jsgf_buffer, int jsgf_buffer_size, char* audio_buffer, int audio_buffer_size, int argc, char *argv[], char* result, int rsize){
 
-    
+    //*(int*) 0 = 0; //Segmentation fault
+    int v = 0;
+    std::cout << 10 / v << std::endl;
     //C version:
     //resultsize=ps_call_from_go(jsgf_buffer, (size_t)jsgf_buffer_size, audio_buffer, (size_t)audio_buffer_size, argc, argv, sresult);
 
@@ -61,6 +69,10 @@ int _ps_continuous_call(char* jsgf_buffer, int jsgf_buffer_size, char* audio_buf
 
 char* ps_continuous_call(char* jsgf_buffer, int jsgf_buffer_size, char* audio_buffer, int audio_buffer_size, int argc, char *argv[], char* result, int rsize){
     char* wresult=NULL;
+
+    segvcatch::init_segv();
+    segvcatch::init_fpe();
+
     try {
         _ps_continuous_call( jsgf_buffer,  jsgf_buffer_size,  audio_buffer,  audio_buffer_size,  argc, argv, result, rsize);
         //throw std::runtime_error("on purpose.");
@@ -138,6 +150,10 @@ char* ps_continuous_call(char* jsgf_buffer, int jsgf_buffer_size, char* audio_bu
 
  char* ps_batch_call(void* audio_buffer, int audio_buffer_size, int argc, char *argv[], char* result, int rsize){
     char* wresult=NULL;
+
+    //segvcatch::init_segv();
+    //segvcatch::init_fpe();
+
     try {
         _ps_batch_call( audio_buffer,  audio_buffer_size,  argc, argv, result, rsize);
         //throw std::runtime_error("on purpose.");

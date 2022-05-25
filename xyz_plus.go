@@ -10,7 +10,7 @@ package xyz_plus
 #cgo CXXFLAGS: -I/usr/local/include/xyzsphinxbase
 #cgo CXXFLAGS: -I/usr/local/include/xyzpocketsphinx
 
-#cgo LDFLAGS: -lm -lpthread -pthread -lstdc++
+#cgo LDFLAGS: -lm -lpthread -pthread -lstdc++ -lsegvcatch
 #cgo LDFLAGS: -lxyzsphinxad -lxyzsphinxbase -lxyzpocketsphinx
 
 #include <stdlib.h>
