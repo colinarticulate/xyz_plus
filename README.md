@@ -13,7 +13,7 @@ ps_plus library
    
 
 ## Versions 
-### v3.0.0
+### v2.1.0
 Gets rid of pocketsphinx system-wide installation required previously. Just need the ps_plus library already built.  
  
 ### v2.0.0  
