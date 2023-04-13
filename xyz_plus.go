@@ -54,7 +54,7 @@ type BatchResp struct {
 }
 
 func Ps_plus_call(arg1 []byte, arg2 []byte, arg3 []string) UttResp {
-
+	fmt.Println("Flutter DEBUG xyz_plus.go: Ps_plus_call(), arg3", arg3)
 	//jsgf buffer
 	bytes1 := C.CBytes(arg1)
 	defer C.free(unsafe.Pointer(bytes1))
