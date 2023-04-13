@@ -1,17 +1,10 @@
 package xyz_plus
 
 /*
-//#cgo CXXFLAGS: -g -O2 -std=c++11
-#cgo CXXFLAGS: -g -Wall -Og -ggdb -std=c++11
-#cgo CXXFLAGS: -Wno-unused-result -Wno-unused-but-set-variable -Wno-unused-function -Wno-unused-parameter -Wno-unused-variable
-#cgo CXXFLAGS: -I${SRCDIR}/xyzsphinxbase/fe
-#cgo CXXFLAGS: -I${SRCDIR}/xyzsphinxbase
-#cgo CXXFLAGS: -I${SRCDIR}/aside_ps_library
-#cgo CXXFLAGS: -I/usr/local/include/xyzsphinxbase
-#cgo CXXFLAGS: -I/usr/local/include/xyzpocketsphinx
 
-#cgo LDFLAGS: -lm -lpthread -pthread -lstdc++
-#cgo LDFLAGS: -lxyzsphinxad -lxyzsphinxbase -lxyzpocketsphinx
+// #cgo LDFLAGS: -L${SRCDIR}/../ps_plus/build/ -lps_plus -Wl,-rpath,${SRCDIR}/../ps_plus/build/
+
+// #cgo LDFLAGS: -L${SRCDIR} -lps_plus -Wl,-rpath,${SRCDIR}
 
 #include <stdlib.h>
 
@@ -203,3 +196,7 @@ func Ps_batch_plus_call(arg2 []byte, arg3 []string) BatchResp {
 	}
 
 }
+
+// func main() {
+// 	// We're only building the plugin, so we don't need any code here.
+// }
