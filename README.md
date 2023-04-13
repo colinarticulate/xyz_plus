@@ -3,7 +3,7 @@ Articulate's version of pocketsphinx in Go as of 4th of May 2022.
 
 The module xyz_plus is the Go wrapper for xyzpocketsphinx_continuous and xyzpocketsphinx_batch. 
 
-This version requires our xyz's version of pocketsphinx (thread safety) which is now self-contained into a library: ps_plus. Repo coming.  
+This version requires our xyz's version of pocketsphinx (thread safety) which is now self-contained into a library: ps_plus (https://github.com/DavidBarbera/ps_plus).  
 
 caller_plus is a module to test xyz_plus but exists in another repository (https://github.com/DavidBarbera/articulate-pocketsphinx-go/caller_plus) .
 
